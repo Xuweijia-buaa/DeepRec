@@ -56,14 +56,21 @@ inline bool IsAllNum(const char* str) {
   return numeric &&*str == '\0';
 }
 
+// 你的模板要匹配的子图，其中的每个op节点。必须指定类型。因为作为模板是匹配一类图结构对应的nodes.而不是具体nodes
 struct TempNode {
-    std::string key;
-    std::string op;
-    std::vector<std::string> inputs;
-    std::vector<std::vector<std::string>> outputs;
+    std::string key;         // 模板中该node的唯一表示。 其中t_->first_key_是该模板的第一个Node的key.  用来找该模板的第一个节点。如果某op节点的类型，和模板第一个节点的op类型能匹配上.就开始尝试match
+    std::string op;          // tf中已有的小op类型，如"Sum"，"Greater"等。作为要替换子图中的一个节点。用模板找老graph的子图时，各个op类型一定要匹配上。
+    std::vector<std::string> inputs;                     // 该op的输入。 可以是子图内部的op, 也可以是子图的外部输入
+                                                         // 输入是子图上一个op，写op节点自己命名的key。          如.inputs = {"greater_0","greater_1"},
+                                                         // 输入是子图的外部输入，写1，2等，代表子图的外部第n个输入。可以是多个输入,如.inputs = {"0","1"},
+                                                         
+
+    std::vector<std::vector<std::string>> outputs;      // 该op的输出，可以是该子图的下一个op(填对应的key). 也可以是对接到外部的输出，写输出顺序
+
     std::vector<std::string> deps_inputs;
     std::vector<std::string> deps_outputs;
 };
+
 
 struct MatchedNode{
     explicit MatchedNode(const Node* n = nullptr, bool v = false) {
@@ -82,6 +89,7 @@ struct MatchedNode{
 // a bundle of output edges attached to the 
 // same port and utilized by CheckDynamicInputsImpl and 
 // CheckDynamicOutputsImpl
+// 待匹配子图的输出
 class OutEdges {
   public: 
     OutEdges(): remainEdgeVal(0) {}
@@ -199,13 +207,15 @@ class OutEdges {
     int remainEdgeVal;
 };
 
+
+// 你自己要用来匹配tf中子图的模板，需要继承的基类
 class TemplateBase {
  public:
-  std::vector<TempNode> temp_nodes_;
+  std::vector<TempNode> temp_nodes_; // 该模板要匹配的子图，包含的所有op nodes.（固定类型和组织结构）（都加到该list）
 
-  std::string first_key_;
-  int num_inputs_;
-  int num_outputs_;
+  std::string first_key_;           // first_key_是该模板的第一个Node的key.  用来找该模板的第一个节点。如果原图中某op节点的类型，和模板第一个节点的op，类型能匹配上.就开始尝试match
+  int num_inputs_;                  // 该模板要匹配的子图，输入子图的op数量，输出子图的外部op的数量
+  int num_outputs_;                 
   int num_deps_inputs_ = 0;
 
   std::string fused_op_;
@@ -220,6 +230,7 @@ class TemplateBase {
     return "TemplateBase";
   }
 
+  // 自己实现这个方法。定义如何进行子图替换. 可以调用该基类的add_iedge等实现图的改变
   virtual bool add_subgraph(std::map<std::string, MatchedNode>& nodes,
                             std::string name_prefix, Graph* g,
                             std::vector<const Edge*>& inputs,
@@ -442,23 +453,41 @@ class TemplateBase {
     }
   }
 
+  // 替换子图的输入边，为新op
+  // ori_edge是我们的原始输入边。
+  // dst是我们的新op
+  // ori_edge: 原始的这条边。
+  // ori_edge->src(): 这条边左边的op. 这个op可能有多个输出，该边只对应该op的第index个输出
+  // ori_edge->src_output(): 原始的这条边,属于对应的左op的第index个输出
+  // dst: 输出节点. 我们要替换成的新op节点。要让原始的输入
+  // dst_input： 新构造的这条边，作为该新op节点的第index个输入边
+  // 让原来输入边，左边的op指向这个新节点。用边推理的时候，原来左op的第i个输出指向子图，现在指向新节点。这样尽管就不会经过原来的子图了
+  // 用原来输出边（ori_edges）的左节点，对接我们新op的第index个输入（dst_input）
   void add_iedge(Graph* g, Node* dst, int dst_input,
       const Edge* ori_edge, bool remove = true) {
-    g->AddEdge(ori_edge->src(), ori_edge->src_output(), dst, dst_input);
+    g->AddEdge(ori_edge->src(), ori_edge->src_output(), dst, dst_input);  // 原始边的左op节点, 指向新节点。 构造一条新边
     if (remove) {
-      g->RemoveEdge(ori_edge);
+      g->RemoveEdge(ori_edge);                                            // 删掉原来的边
     }
+    // 这样前向推理的时候，尽管node都在原始图里。但是子图外的左nodes推理时，直接会用新OP.进入新op了
   }
 
+  // 替换子图的输出边。这样原始的外部输出op，原来是对接的子图，现在是对接我们的新op出。实现了用我们的op，接管原来输入输出的目的
+  // src是我们的新op
+  // ori_edges:是原始输出边
+  // 用原来输出边（ori_edges）的右节点，对接我们新op的第index个输出（src_output）
   void add_oedges(Graph* g, Node* src, int src_output,
-      std::vector<const Edge*>& ori_edges) {
+  std::vector<const Edge*>& ori_edges) {
     for (auto* ori_edge : ori_edges) {
       if (ori_edge != nullptr && ori_edge->dst() != nullptr) {
+        // 原来输出边的右节点，对应的左节点换成我们新op(src)的第src_output个输出。
         g->AddEdge(src, src_output, ori_edge->dst(), ori_edge->dst_input());
         g->RemoveEdge(ori_edge);
       }
     }
   }
+
+  
   void remove_oedges(Graph* g, std::vector<const Edge*>& ori_edges) {
     for (auto* ori_edge : ori_edges) {
       g->RemoveEdge(ori_edge);

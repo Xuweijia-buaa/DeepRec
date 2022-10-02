@@ -802,6 +802,8 @@ def train(sess_config,
             config=sess_config) as sess:
         while not sess.should_stop():
             sess.run([model.loss, model.train_op])
+        #writer = tf.summary.FileWriter("./mygraphs_tf1", graph=sess.graph)  # 保存sess内的静态图。需要放在在运算图定义完成之后
+    #writer.close()
     time_end = time.perf_counter()
     print("Training completed.")
     time_cost = time_end - time_start

@@ -30,7 +30,7 @@ def run_models():
     # 依次执行各个模型
     for model in models_name:
         model_path = models_dir + model
-        os.system('cd '+model_path+'; python train.py --steps '+str(model_steps[model]))
+        os.system('cd '+model_path+'; python train.py --steps '+str(model_steps[model])) # -timeline=2000
         with open(result_dir+model+'/result', 'r') as f:
             lines = f.readlines()
         model_speed = float(lines[0])

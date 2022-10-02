@@ -309,17 +309,21 @@ bool OptimizerFusionImpl::CheckMatchedNodeInSameFrame() {
   return true;
 }
 
+// 核心驱动类，用模板和已有的子图匹配，用你的新op完成替换
 bool OptimizerFusionImpl::Optimize() {
   bool changed = false;
   // TODO(minmin) check Template consistency before really optimizing
-  for (Node* node : g_->nodes()) {
-    if (node->type_string() == temp_node_map_[t_->first_key_].op) {
-      matched_node_map_.clear();
+  for (Node* node : g_->nodes()) {   // 遍历图中的每个op节点。看能不能匹配上某个你自己写的模板（按照模板的第一个节点（firstkey）的op类型去判断）
+    if (node->type_string() == temp_node_map_[t_->first_key_].op) {     // temp_node_map_: 你自己写的子图模板。包含很多op节点。用来匹配你想替换掉的老子图
+                                                                        // temp_node_map_: <key,node>
+                                                                        // t_->first_key_  模板的第一个节点。
+                                                                        // map_[t_->first_key_].op：某op节点的类型，和模板第一个op节点的类型匹配上.就开始尝试match
+      matched_node_map_.clear();               // 用模板匹配到的,你想要替换的子图中的所有op节点 <key,node>
       t_->node_to_temp_key_.clear();
       fused_op_deps_inputs_.clear();
       fused_op_input_dynamic_.clear();
       fused_op_outputs_dynamic_.clear();
-      fused_op_inputs_.resize(t_->num_inputs_);
+      fused_op_inputs_.resize(t_->num_inputs_); // 这个子图的输入，输出
       fused_op_outputs_.resize(t_->num_outputs_);
       for (int i = 0; i < fused_op_inputs_.size(); ++i) {
         fused_op_inputs_[i] = nullptr;
@@ -421,7 +425,7 @@ bool OptimizerFusionImpl::Optimize() {
         VLOG(2) << "  " << iter->second.node->name();
       }
 
-      std::string fused_op_name = strings::StrCat("fused_op_", num_matched_);
+      std::string fused_op_name = strings::StrCat("fused_op_", num_matched_); // numbers of matched nodes  in template
       if (fused_op_outputs_dynamic_.size() > 0) {
         // append dynamic out edges
         fused_op_outputs_.reserve(fused_op_outputs_.size() + 
@@ -433,9 +437,14 @@ bool OptimizerFusionImpl::Optimize() {
 
       bool subgraph_replaced = false;
       if (t_->num_deps_inputs_ > 0) {
-        subgraph_replaced = t_->add_subgraph(matched_node_map_,
-          fused_op_name, g_, fused_op_inputs_, fused_op_deps_inputs_, 
-          fused_op_outputs_);
+        // 能匹配上的话。最后替换，就把图改完了
+        //  新增了新边后，删掉了原来的边. 实现了用我们的op，接管原来输入输出的目的
+        //  调用addsubgraph后，原始图变成了新图
+        subgraph_replaced = t_->add_subgraph(matched_node_map_,       // matched_node_map_: 你用模板匹配到的子图中的所有op节点：<key,node>
+          fused_op_name, g_, fused_op_inputs_, fused_op_deps_inputs_, // 这个子图的输入，输出
+          fused_op_outputs_);                                         // 自己写的模板，都要继承TemplateBase，实现这个方法。进行子图替换（可以调用基类的add_iedge等实现图的改变）
+        // subgraph_replaced:替换成功，就是true. 此时g_变成新的图了
+
       } else {
         subgraph_replaced = t_->add_subgraph(matched_node_map_,
           fused_op_name, g_, fused_op_inputs_, fused_op_outputs_);

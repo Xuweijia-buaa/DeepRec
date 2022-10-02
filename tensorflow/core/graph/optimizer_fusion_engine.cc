@@ -32,6 +32,7 @@ bool OptimizeFusion(Graph* g) {
 
   bool changed = false;
   std::vector<std::unique_ptr<TemplateBase>> templates;
+  // 你写好的用来匹配子图的模板，需要添加到template_list里，这样用老图的nodes遍历时，才有可能匹配到你定义的模板：
   templates.emplace_back(new TemplateSparseInnerFlatten());
   templates.emplace_back(new TemplateLogicSumBase());
   templates.emplace_back(new TemplateSelectPruningElseConst());
